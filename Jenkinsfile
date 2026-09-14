@@ -28,6 +28,46 @@ pipeline {
             }
         }
 
+        stage('Sync Compose Version') {
+            when {
+                expression { env.CHANGE_ID != null }
+            }
+            steps {
+                script {
+                    def gitUrl = env.GIT_URL ?: "git@github.com:matheussouza88/watchtower.git"
+                    def repoPath = gitUrl.replace('git@github.com:', '').replace('https://github.com/', '').replace('.git', '')
+                    def branchName = env.CHANGE_BRANCH
+
+                    echo "Checking if docker-compose.yml is in sync with Dockerfile..."
+                    withCredentials([usernamePassword(credentialsId: env.GITHUB_TOKEN_ID, usernameVariable: 'GH_USER', passwordVariable: 'GH_PAT')]) {
+                        sh """
+                            if [ -f Dockerfile ] && [ -f docker-compose.yml ]; then
+                                dockerfile_tag=\$(grep -m1 '^FROM ' Dockerfile | awk -F':' '{print \$2}' | tr -d '[:space:]')
+                                compose_tag=\$(grep -m1 '^[[:space:]]*image:[[:space:]]*containrrr/watchtower:' docker-compose.yml | awk -F':' '{print \$3}' | tr -d '[:space:]')
+
+                                echo "Dockerfile image tag: \${dockerfile_tag}"
+                                echo "docker-compose.yml image tag: \${compose_tag}"
+
+                                if [ -n "\$dockerfile_tag" ] && [ -n "\$compose_tag" ] && [ "\$dockerfile_tag" != "\$compose_tag" ]; then
+                                    echo "Version mismatch detected. Updating docker-compose.yml to version \${dockerfile_tag}..."
+                                    sed -i -E "s|(^[[:space:]]*image:[[:space:]]*containrrr/watchtower:)[^[:space:]]+|\\1\${dockerfile_tag}|" docker-compose.yml
+
+                                    git config user.name "Matheus"
+                                    git config user.email "matheussouza88@gmail.com"
+                                    git add docker-compose.yml
+                                    git commit -m "chore: sync docker-compose.yml watchtower version to \${dockerfile_tag}"
+                                    git push https://\${GH_USER}:\${GH_PAT}@github.com/${repoPath}.git HEAD:${branchName}
+                                    echo "docker-compose.yml updated and pushed to ${branchName}."
+                                else
+                                    echo "docker-compose.yml is already synchronized with Dockerfile."
+                                fi
+                            fi
+                        """
+                    }
+                }
+            }
+        }
+
         stage('Validate Configuration') {
             steps {
                 echo "Validating docker-compose.yml configuration..."
